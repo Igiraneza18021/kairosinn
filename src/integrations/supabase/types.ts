@@ -270,22 +270,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      create_booking_with_rooms: {
-        Args: {
-          _check_in: string
-          _check_out: string
-          _group_id: string
-          _guest_email: string
-          _guest_name: string
-          _guest_phone: string
-          _notes: string
-          _num_guests: number
-          _room_ids: string[]
-          _total_price: number
-          _user_id: string
-        }
-        Returns: string
-      }
       get_unavailable_room_ids: {
         Args: { _check_in: string; _check_out: string }
         Returns: {
