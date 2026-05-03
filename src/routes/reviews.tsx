@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { SiteLayout } from "@/components/SiteLayout";
 import { Button } from "@/components/ui/button";
@@ -32,9 +32,7 @@ type Review = {
 };
 
 function ReviewsPage() {
-  const navigate = useNavigate();
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [signedIn, setSignedIn] = useState(false);
   const [name, setName] = useState("");
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState("");
@@ -53,7 +51,6 @@ function ReviewsPage() {
     load();
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) {
-        setSignedIn(true);
         supabase
           .from("profiles")
           .select("full_name")
@@ -66,15 +63,13 @@ function ReviewsPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { data: sess } = await supabase.auth.getSession();
-    if (!sess.session) {
-      navigate({ to: "/auth" });
-      return;
-    }
+    if (!name.trim()) return toast.error("Please add your name.");
     setSubmitting(true);
+    const { data: sess } = await supabase.auth.getSession();
+    const userId = sess.session?.user.id ?? null;
     const { error } = await supabase.from("reviews").insert({
-      user_id: sess.session.user.id,
-      guest_name: name.trim() || "Guest",
+      user_id: userId,
+      guest_name: name.trim(),
       rating,
       comment: comment.trim() || null,
       approved: false,
@@ -128,42 +123,36 @@ function ReviewsPage() {
 
           <aside className="rounded-2xl border border-border bg-card p-5 shadow-sm">
             <h2 className="font-serif text-lg font-bold">Leave a review</h2>
-            {!signedIn ? (
-              <p className="mt-2 text-sm text-muted-foreground">
-                Please <Link to="/auth" className="text-primary underline">sign in</Link> to share your experience.
-              </p>
-            ) : (
-              <form onSubmit={submit} className="mt-3 space-y-3">
-                <div>
-                  <Label htmlFor="rn">Your name</Label>
-                  <Input id="rn" value={name} onChange={(e) => setName(e.target.value)} required />
+            <form onSubmit={submit} className="mt-3 space-y-3">
+              <div>
+                <Label htmlFor="rn">Your name</Label>
+                <Input id="rn" value={name} onChange={(e) => setName(e.target.value)} required />
+              </div>
+              <div>
+                <Label>Rating</Label>
+                <div className="mt-1 flex gap-1">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button
+                      type="button"
+                      key={n}
+                      onClick={() => setRating(n)}
+                      aria-label={`${n} stars`}
+                    >
+                      <Star
+                        className={`h-6 w-6 ${n <= rating ? "fill-amber-400 text-amber-400" : "text-muted-foreground"}`}
+                      />
+                    </button>
+                  ))}
                 </div>
-                <div>
-                  <Label>Rating</Label>
-                  <div className="mt-1 flex gap-1">
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <button
-                        type="button"
-                        key={n}
-                        onClick={() => setRating(n)}
-                        aria-label={`${n} stars`}
-                      >
-                        <Star
-                          className={`h-6 w-6 ${n <= rating ? "fill-amber-400 text-amber-400" : "text-muted-foreground"}`}
-                        />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <Label htmlFor="rc">Comment (optional)</Label>
-                  <Textarea id="rc" value={comment} onChange={(e) => setComment(e.target.value)} />
-                </div>
-                <Button type="submit" disabled={submitting} className="w-full">
-                  {submitting ? "Submitting..." : "Submit review"}
-                </Button>
-              </form>
-            )}
+              </div>
+              <div>
+                <Label htmlFor="rc">Comment (optional)</Label>
+                <Textarea id="rc" value={comment} onChange={(e) => setComment(e.target.value)} />
+              </div>
+              <Button type="submit" disabled={submitting} className="w-full">
+                {submitting ? "Submitting..." : "Submit review"}
+              </Button>
+            </form>
           </aside>
         </div>
       </section>

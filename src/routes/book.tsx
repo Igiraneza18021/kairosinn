@@ -21,7 +21,7 @@ export const Route = createFileRoute("/book")({
       {
         name: "description",
         content:
-          "Reserve a room at Kairos Inn in Karangazi, Nyagatare. Pick your dates and confirm in seconds.",
+          "Reserve a room at Kairos Inn in Karangazi, Nyagatare. Pick your dates and confirm in seconds — no account needed.",
       },
     ],
   }),
@@ -54,8 +54,6 @@ function BookPage() {
   const { type = "standard" } = useSearch({ from: "/book" });
   const navigate = useNavigate();
 
-  const [authChecked, setAuthChecked] = useState(false);
-  const [signedIn, setSignedIn] = useState(false);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [unavailableIds, setUnavailableIds] = useState<Set<string>>(new Set());
   const [checkIn, setCheckIn] = useState(today());
@@ -68,16 +66,11 @@ function BookPage() {
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Auth check — redirect to /auth with redirect back
+  // Prefill from existing session if signed in (optional)
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) {
-        navigate({ to: "/auth" });
-        return;
-      }
-      setSignedIn(true);
-      setAuthChecked(true);
-      // Prefill from profile
+      if (!data.session) return;
+      setGuestEmail(data.session.user.email ?? "");
       supabase
         .from("profiles")
         .select("full_name, phone")
@@ -87,13 +80,11 @@ function BookPage() {
           if (p?.full_name) setGuestName(p.full_name);
           if (p?.phone) setGuestPhone(p.phone);
         });
-      setGuestEmail(data.session.user.email ?? "");
     });
-  }, [navigate]);
+  }, []);
 
-  // Load rooms of the chosen type
+  // Load rooms
   useEffect(() => {
-    if (!signedIn) return;
     supabase
       .from("rooms")
       .select("id, room_number, display_name, room_type, price_per_night, group_id")
@@ -104,46 +95,26 @@ function BookPage() {
         if (data) {
           setRooms(data as Room[]);
           if (type === "family_suite" && data.length) {
-            setSelectedRoomId(data[0].id); // suite is auto-selected (we book both)
+            setSelectedRoomId(data[0].id);
+          } else {
+            setSelectedRoomId("");
           }
         }
       });
-  }, [signedIn, type]);
+  }, [type]);
 
-  // Compute unavailable rooms for chosen dates (overlap with confirmed/pending bookings)
+  // Availability for chosen dates (uses public RPC — no auth needed)
   useEffect(() => {
-    if (!signedIn || !checkIn || !checkOut) return;
-    if (nights(checkIn, checkOut) <= 0) return;
-
-    (async () => {
-      // Fetch bookings overlapping the date range that are not cancelled
-      const { data: overlapping } = await supabase
-        .from("bookings")
-        .select("id, check_in, check_out, status")
-        .neq("status", "cancelled")
-        .lt("check_in", checkOut)
-        .gt("check_out", checkIn);
-
-      if (!overlapping?.length) {
-        setUnavailableIds(new Set());
-        return;
-      }
-      const ids = overlapping.map((b) => b.id);
-      const { data: br } = await supabase
-        .from("booking_rooms")
-        .select("room_id, booking_id")
-        .in("booking_id", ids);
-      setUnavailableIds(new Set(br?.map((x) => x.room_id) ?? []));
-    })();
-  }, [signedIn, checkIn, checkOut]);
-
-  if (!authChecked) {
-    return (
-      <SiteLayout>
-        <div className="mx-auto max-w-3xl px-4 py-16 text-muted-foreground">Loading...</div>
-      </SiteLayout>
-    );
-  }
+    if (!checkIn || !checkOut || nights(checkIn, checkOut) <= 0) {
+      setUnavailableIds(new Set());
+      return;
+    }
+    supabase
+      .rpc("get_unavailable_room_ids", { _check_in: checkIn, _check_out: checkOut })
+      .then(({ data }) => {
+        setUnavailableIds(new Set((data ?? []).map((r: { room_id: string }) => r.room_id)));
+      });
+  }, [checkIn, checkOut]);
 
   const n = nights(checkIn, checkOut);
   const isFamily = type === "family_suite";
@@ -154,65 +125,48 @@ function BookPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (n <= 0) {
-      toast.error("Check-out must be after check-in.");
-      return;
+    if (n <= 0) return toast.error("Check-out must be after check-in.");
+    if (!guestName.trim() || !guestPhone.trim()) {
+      return toast.error("Please enter your name and phone.");
     }
-
-    const { data: sess } = await supabase.auth.getSession();
-    if (!sess.session) {
-      navigate({ to: "/auth" });
-      return;
-    }
-    const userId = sess.session.user.id;
-    const groupId = crypto.randomUUID();
 
     let roomIds: string[] = [];
     if (isFamily) {
-      if (familyRooms.length < 2) {
-        toast.error("Family suite is not available right now.");
-        return;
-      }
-      if (familyUnavailable) {
-        toast.error("Family suite is already booked for those dates.");
-        return;
-      }
+      if (familyRooms.length < 2) return toast.error("Family suite is not available right now.");
+      if (familyUnavailable) return toast.error("Family suite is already booked for those dates.");
       roomIds = familyRooms.map((r) => r.id);
     } else {
-      if (!selectedRoomId) {
-        toast.error("Please pick a room.");
-        return;
-      }
-      if (unavailableIds.has(selectedRoomId)) {
-        toast.error("That room is no longer available for those dates.");
-        return;
-      }
+      if (!selectedRoomId) return toast.error("Please pick a room.");
+      if (unavailableIds.has(selectedRoomId)) return toast.error("That room is no longer available for those dates.");
       roomIds = [selectedRoomId];
     }
 
     setSubmitting(true);
+    const { data: sess } = await supabase.auth.getSession();
+    const userId = sess.session?.user.id ?? null;
+    const groupId = crypto.randomUUID();
+
     const { data: booking, error } = await supabase
       .from("bookings")
       .insert({
         user_id: userId,
         group_id: groupId,
-        guest_name: guestName,
-        guest_phone: guestPhone,
-        guest_email: guestEmail || null,
+        guest_name: guestName.trim(),
+        guest_phone: guestPhone.trim(),
+        guest_email: guestEmail.trim() || null,
         check_in: checkIn,
         check_out: checkOut,
         num_guests: numGuests,
         total_price: total,
         status: "pending",
-        notes: notes || null,
+        notes: notes.trim() || null,
       })
       .select("id")
       .single();
 
     if (error || !booking) {
       setSubmitting(false);
-      toast.error(error?.message || "Could not create booking.");
-      return;
+      return toast.error(error?.message || "Could not create booking.");
     }
 
     const { error: brError } = await supabase
@@ -220,12 +174,9 @@ function BookPage() {
       .insert(roomIds.map((rid) => ({ booking_id: booking.id, room_id: rid })));
 
     setSubmitting(false);
-    if (brError) {
-      toast.error(brError.message);
-      return;
-    }
-    toast.success("Booking request sent! Reception will confirm shortly.");
-    navigate({ to: "/account" });
+    if (brError) return toast.error(brError.message);
+    toast.success("Booking request sent! Reception will call you shortly to confirm.");
+    navigate({ to: "/" });
   };
 
   return (
@@ -236,7 +187,7 @@ function BookPage() {
             Book {isFamily ? "the Family Suite" : "a Standard Room"}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Pick your dates and confirm. Reception will approve your booking shortly.
+            No account required — just pick your dates and leave your phone number. Reception will confirm.
           </p>
           <div className="mt-3 flex gap-2 text-sm">
             <Link
@@ -287,7 +238,7 @@ function BookPage() {
 
           {!isFamily && (
             <div className="md:col-span-2">
-              <Label>Choose a room</Label>
+              <Label>Choose a room (for {n} night{n === 1 ? "" : "s"})</Label>
               <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {rooms.map((r) => {
                   const taken = unavailableIds.has(r.id);
@@ -300,13 +251,16 @@ function BookPage() {
                       onClick={() => setSelectedRoomId(r.id)}
                       className={`rounded-lg border px-3 py-3 text-sm font-medium transition ${
                         taken
-                          ? "cursor-not-allowed border-border bg-muted text-muted-foreground line-through"
+                          ? "cursor-not-allowed border-border bg-muted text-muted-foreground"
                           : active
                             ? "border-primary bg-primary text-primary-foreground"
                             : "border-border bg-background text-foreground hover:border-primary"
                       }`}
                     >
-                      Room {r.room_number}
+                      <div>Room {r.room_number}</div>
+                      <div className={`mt-1 text-xs ${taken ? "" : active ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
+                        {taken ? "Booked" : "Available"}
+                      </div>
                     </button>
                   );
                 })}
