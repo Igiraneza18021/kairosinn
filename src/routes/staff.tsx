@@ -68,15 +68,45 @@ type Profile = {
   phone: string | null;
 };
 
+type AppRole = "guest" | "staff" | "manager" | "owner" | "accountant" | "receptionist";
+
 type RoleRow = {
   user_id: string;
-  role: "guest" | "staff" | "manager";
+  role: AppRole;
 };
+
+type Transaction = {
+  id: string;
+  amount: number;
+  payment_date: string;
+  payment_method: string;
+  description: string;
+  booking_id: string | null;
+  recorded_by: string;
+  created_at: string;
+};
+
+type PasskeyRow = { role: AppRole; passkey: string };
 
 function StaffPage() {
   const navigate = useNavigate();
   const [ready, setReady] = useState(false);
-  const [role, setRole] = useState<"staff" | "manager" | null>(null);
+  const [roles, setRoles] = useState<AppRole[]>([]);
+
+  const isOwner = roles.includes("owner");
+  const isManager = roles.includes("manager");
+  const isAccountant = roles.includes("accountant");
+  const canSeeTransactions = isOwner || isManager || isAccountant;
+  const canManageStaff = isOwner || isManager;
+  const primaryRole: AppRole = isOwner
+    ? "owner"
+    : isManager
+      ? "manager"
+      : isAccountant
+        ? "accountant"
+        : roles.includes("receptionist")
+          ? "receptionist"
+          : "staff";
 
   useEffect(() => {
     (async () => {
@@ -87,14 +117,14 @@ function StaffPage() {
       }
       const uid = sess.session.user.id;
       const { data: r } = await supabase.from("user_roles").select("role").eq("user_id", uid);
-      const roles = r?.map((x) => x.role) ?? [];
-      if (roles.includes("manager")) setRole("manager");
-      else if (roles.includes("staff")) setRole("staff");
-      else {
+      const list = (r?.map((x) => x.role) ?? []) as AppRole[];
+      const allowed: AppRole[] = ["staff", "manager", "owner", "accountant", "receptionist"];
+      if (!list.some((x) => allowed.includes(x))) {
         toast.error("Staff access only.");
         navigate({ to: "/account" });
         return;
       }
+      setRoles(list);
       setReady(true);
     })();
   }, [navigate]);
