@@ -4,6 +4,7 @@ import { SiteLayout } from "@/components/SiteLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
@@ -17,6 +18,8 @@ import {
   CheckCircle2,
   XCircle,
   Trash2,
+  Plus,
+  Loader2,
 } from "lucide-react";
 
 export const Route = createFileRoute("/staff")({
@@ -359,6 +362,19 @@ function BookingsPanel() {
 /* ─────────────────  Rooms  ───────────────── */
 function RoomsPanel({ canEdit }: { canEdit: boolean }) {
   const [rooms, setRooms] = useState<Room[]>([]);
+  
+  // --- ADD ROOM FORM STATES ---
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [newRoom, setNewRoom] = useState({
+    room_number: "",
+    display_name: "",
+    price_per_night: "",
+    room_type: "standard",
+    description: "",
+  });
+  const [imageFile, setImageFile] = useState<File | null>(null);
+
   const load = async () => {
     const { data } = await supabase.from("rooms").select("*").order("room_number");
     setRooms((data as Room[]) ?? []);
@@ -372,42 +388,197 @@ function RoomsPanel({ canEdit }: { canEdit: boolean }) {
     load();
   };
 
+  const handleCreateRoom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRoom.display_name || !newRoom.room_number || !newRoom.price_per_night) {
+      toast.error("Please fill in all required fields.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      let imageUrl: string | null = null;
+
+      if (imageFile) {
+        // 1. Upload the image to Supabase storage bucket named "room-images"
+        const fileExt = imageFile.name.split('.').pop();
+        const fileName = `${Math.random()}.${fileExt}`;
+        const filePath = `public/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("room-images")
+          .upload(filePath, imageFile);
+
+        if (uploadError) throw uploadError;
+
+        // Get public URL for the newly uploaded image
+        const { data: urlData } = supabase.storage.from("room-images").getPublicUrl(filePath);
+        imageUrl = urlData.publicUrl;
+      }
+
+      // 2. Insert the room record into the "rooms" table
+      const { error: insertError } = await supabase.from("rooms").insert({
+        room_number: newRoom.room_number,
+        display_name: newRoom.display_name,
+        price_per_night: parseInt(newRoom.price_per_night),
+        room_type: newRoom.room_type as "standard" | "family_suite",
+        description: newRoom.description || null,
+        image_url: imageUrl,
+        active: true,
+      });
+
+      if (insertError) throw insertError;
+
+      toast.success("Room created successfully!");
+
+      // Reset form and reload
+      setNewRoom({ room_number: "", display_name: "", price_per_night: "", room_type: "standard", description: "" });
+      setImageFile(null);
+      setShowAddForm(false);
+      load();
+
+    } catch (error: any) {
+      toast.error(error.message || "Something went wrong creating the room.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
-    <div className="space-y-3">
-      {rooms.map((r) => (
-        <article key={r.id} className="rounded-xl border border-border bg-card p-4 shadow-sm">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div className="font-semibold">{r.display_name}</div>
-              <div className="text-sm text-muted-foreground">
-                Room {r.room_number} · {r.room_type === "family_suite" ? "Family Suite" : "Standard"} ·{" "}
-                RWF {Number(r.price_per_night).toLocaleString()}/night
-              </div>
-            </div>
-            {canEdit && (
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  size="sm"
-                  variant={r.active ? "outline" : "default"}
-                  className="flex-1 sm:flex-none"
-                  onClick={() => updateField(r.id, { active: !r.active })}
-                >
-                  {r.active ? "Mark out of service" : "Reactivate"}
-                </Button>
+    <div className="space-y-4">
+      {canEdit && (
+        <div className="flex justify-end">
+          <Button
+            onClick={() => setShowAddForm(!showAddForm)}
+            className="flex items-center gap-2"
+          >
+            <Plus className="h-4 w-4" />
+            {showAddForm ? "Cancel Add Room" : "Add New Room"}
+          </Button>
+        </div>
+      )}
+
+      {canEdit && showAddForm && (
+        <article className="rounded-xl border border-border bg-card p-6 shadow-sm max-w-xl mx-auto">
+          <h3 className="text-lg font-semibold mb-4">Add New Room</h3>
+          <form onSubmit={handleCreateRoom} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="display_name">Room Title / Display Name</Label>
                 <Input
-                  type="number"
-                  defaultValue={r.price_per_night}
-                  onBlur={(e) => {
-                    const n = Number(e.target.value);
-                    if (n && n !== r.price_per_night) updateField(r.id, { price_per_night: n });
-                  }}
-                  className="w-28 sm:w-32"
+                  id="display_name"
+                  type="text"
+                  placeholder="e.g., Deluxe Single Bed"
+                  value={newRoom.display_name}
+                  onChange={(e) => setNewRoom({ ...newRoom, display_name: e.target.value })}
+                  required
                 />
               </div>
-            )}
-          </div>
+              <div className="space-y-2">
+                <Label htmlFor="room_number">Room Number</Label>
+                <Input
+                  id="room_number"
+                  type="text"
+                  placeholder="e.g., 101"
+                  value={newRoom.room_number}
+                  onChange={(e) => setNewRoom({ ...newRoom, room_number: e.target.value })}
+                  required
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="price_per_night">Price (RWF) / Night</Label>
+                <Input
+                  id="price_per_night"
+                  type="number"
+                  placeholder="e.g., 45000"
+                  value={newRoom.price_per_night}
+                  onChange={(e) => setNewRoom({ ...newRoom, price_per_night: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="room_type">Room Type Block</Label>
+                <select
+                  id="room_type"
+                  value={newRoom.room_type}
+                  onChange={(e) => setNewRoom({ ...newRoom, room_type: e.target.value })}
+                  className="w-full h-10 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none"
+                >
+                  <option value="standard">Standard Room</option>
+                  <option value="family_suite">Family Suite</option>
+                </select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                placeholder="Describe the room finishes, provisions, bed types..."
+                value={newRoom.description}
+                onChange={(e) => setNewRoom({ ...newRoom, description: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="image_file">Room Image File (Optional)</Label>
+              <Input
+                id="image_file"
+                type="file"
+                accept="image/*"
+                onChange={(e) => setImageFile(e.target.files ? e.target.files[0] : null)}
+                className="cursor-pointer"
+              />
+            </div>
+            <Button type="submit" disabled={isSubmitting} className="w-full">
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating Room...
+                </>
+              ) : (
+                "Create Room"
+              )}
+            </Button>
+          </form>
         </article>
-      ))}
+      )}
+
+      <div className="space-y-3">
+        {rooms.map((r) => (
+          <article key={r.id} className="rounded-xl border border-border bg-card p-4 shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="font-semibold">{r.display_name}</div>
+                <div className="text-sm text-muted-foreground">
+                  Room {r.room_number} · {r.room_type === "family_suite" ? "Family Suite" : "Standard"} ·{" "}
+                  RWF {Number(r.price_per_night).toLocaleString()}/night
+                </div>
+              </div>
+              {canEdit && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant={r.active ? "outline" : "default"}
+                    className="flex-1 sm:flex-none"
+                    onClick={() => updateField(r.id, { active: !r.active })}
+                  >
+                    {r.active ? "Mark out of service" : "Reactivate"}
+                  </Button>
+                  <Input
+                    type="number"
+                    defaultValue={r.price_per_night}
+                    onBlur={(e) => {
+                      const n = Number(e.target.value);
+                      if (n && n !== r.price_per_night) updateField(r.id, { price_per_night: n });
+                    }}
+                    className="w-28 sm:w-32"
+                  />
+                </div>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }

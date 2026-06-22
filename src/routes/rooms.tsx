@@ -37,8 +37,8 @@ type RoomCard = {
 
 function RoomsPage() {
   const [available, setAvailable] = useState<{ standard: number; family: boolean } | null>(null);
-
-  useEffect(() => {
+  
+  const fetchRoomsCount = () => {
     supabase
       .from("rooms")
       .select("room_type")
@@ -50,6 +50,10 @@ function RoomsPage() {
           family: data.filter((r) => r.room_type === "family_suite").length >= 2,
         });
       });
+  };
+
+  useEffect(() => {
+    fetchRoomsCount();
   }, []);
 
   const cards: RoomCard[] = [
@@ -82,15 +86,17 @@ function RoomsPage() {
         
         {/* --- PAGE HEADER --- */}
         <section className="bg-[#faf6ee] border-b border-[#af8f52]/20">
-          <div className="mx-auto max-w-6xl px-6 py-16 text-center md:text-left">
-            <span className="text-xs font-bold tracking-[0.3em] text-[#af8f52] block mb-2">ACCOMMODATIONS</span>
-            <h1 className="font-serif text-4xl font-normal tracking-wide text-[#2c2520] md:text-5xl">
-              Our Rooms & Rates
-            </h1>
-            <div className="w-16 h-[1px] bg-[#af8f52] my-4 mx-auto md:mx-0" />
-            <p className="max-w-2xl font-serif italic text-sm text-muted-foreground leading-relaxed">
-              Every private quarter is provisioned with curated modern essentials, woven seamlessly with authentic regional comfort and a fresh morning breakfast.
-            </p>
+          <div className="mx-auto max-w-6xl px-6 py-16 flex flex-col md:flex-row md:items-center md:justify-between text-center md:text-left">
+            <div>
+              <span className="text-xs font-bold tracking-[0.3em] text-[#af8f52] block mb-2">ACCOMMODATIONS</span>
+              <h1 className="font-serif text-4xl font-normal tracking-wide text-[#2c2520] md:text-5xl">
+                Our Rooms & Rates
+              </h1>
+              <div className="w-16 h-[1px] bg-[#af8f52] my-4 mx-auto md:mx-0" />
+              <p className="max-w-2xl font-serif italic text-sm text-muted-foreground leading-relaxed">
+                Every private quarter is provisioned with curated modern essentials, woven seamlessly with authentic regional comfort and a fresh morning breakfast.
+              </p>
+            </div>
           </div>
         </section>
 
